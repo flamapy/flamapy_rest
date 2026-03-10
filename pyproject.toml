@@ -61,6 +61,7 @@ max-complexity = 10
 "__pycache__/*" = ["ALL"]
 
 [tool.mypy]
+explicit_package_bases = true
 scripts_are_modules = true
 show_traceback = true
 check_untyped_defs = true
