@@ -1,6 +1,7 @@
 import os
 import inspect
 import json
+from typing import Any
 
 from flask import Blueprint, request, jsonify
 from flamapy.interfaces.python.flamapy_feature_model import FLAMAFeatureModel
@@ -12,21 +13,22 @@ operations_bp = Blueprint('operations_bp', __name__, url_prefix='/api/v1/operati
 MODEL_FOLDER = './resources/models/'
 
 class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
+    def default(self, obj: Any) -> Any:
         if isinstance(obj, Configuration):
             return obj.__dict__
         return super().default(obj)
 
-def _api_call(operation_name: str):
+def _api_call(operation_name: str) -> Any:
     # Get files
     uploaded_model = request.files['model']
 
     # Check if file is provided
-    if uploaded_model.filename != '':
+    filename: str = uploaded_model.filename or ''
+    if filename != '':
         # Save file
-        uploaded_model.save(os.path.join(MODEL_FOLDER, uploaded_model.filename))
+        uploaded_model.save(os.path.join(MODEL_FOLDER, filename))
 
-        fm = FLAMAFeatureModel(os.path.join(MODEL_FOLDER, uploaded_model.filename))
+        fm = FLAMAFeatureModel(os.path.join(MODEL_FOLDER, filename))
         operation = getattr(fm, operation_name)
 
         # Extract the method signature
@@ -39,16 +41,19 @@ def _api_call(operation_name: str):
                 args.append(request.form['feature'])
             elif param.name == 'configuration_path':
                 configuration = request.files['configuration']
-                configuration.save(os.path.join(MODEL_FOLDER, configuration.filename))
-                args.append(os.path.join(MODEL_FOLDER, configuration.filename))
+                conf_filename: str = configuration.filename or ''
+                configuration.save(os.path.join(MODEL_FOLDER, conf_filename))
+                args.append(os.path.join(MODEL_FOLDER, conf_filename))
 
         result = operation(*args)
 
         # Remove file
-        os.remove(os.path.join(MODEL_FOLDER, uploaded_model.filename))
+        os.remove(os.path.join(MODEL_FOLDER, filename))
 
         if 'configuration' in request.files:
-            os.remove(os.path.join(MODEL_FOLDER, request.files['configuration'].filename))
+            conf_file = request.files['configuration']
+            conf_file_name: str = conf_file.filename or ''
+            os.remove(os.path.join(MODEL_FOLDER, conf_file_name))
 
         # Return result
         if result is None:
@@ -57,7 +62,7 @@ def _api_call(operation_name: str):
             return jsonify(json.loads(json.dumps(result, cls=CustomJSONEncoder)))
 
 
-def extract_docstring_with_swagger_info(method):
+def extract_docstring_with_swagger_info(method: Any) -> str:
     docstring = method.__doc__ or ""
     parameters = """
     parameters:
@@ -100,8 +105,8 @@ def extract_docstring_with_swagger_info(method):
     docstring = docstring.replace('\n', '')
     return docstring + swagger_info
 
-def create_route(operation_name: str, docstring: str):
-    def route_function():
+def create_route(operation_name: str, docstring: str) -> Any:
+    def route_function() -> Any:
         return _api_call(operation_name)
 
     route_function.__name__ = operation_name

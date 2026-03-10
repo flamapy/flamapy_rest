@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, Response
 from flask_cors import CORS
 from flasgger import Swagger
 
@@ -20,7 +20,7 @@ swag = Swagger(app,config=config,merge=True)
 app.register_blueprint(operations_bp)
 
 @app.route("/", methods=['GET'])
-def home():
+def home() -> Response:
     return app.send_static_file('home.html')
 
 if __name__ == '__main__':
