@@ -4,9 +4,9 @@ FROM python:3.9-slim
 # Set the working directory in the container to /app
 WORKDIR /flamapy-api
 
-# Install any needed packages specified in requirements.txt
-COPY requirements.txt requirements.txt
-RUN pip3 install -r requirements.txt
+COPY pyproject.toml pyproject.toml
+COPY setup.py setup.py
+RUN pip3 install .
 COPY . .
 
 # Make port 8000 available to the world outside this container

@@ -1,9 +1,0 @@
-wheel
-Flask
-gunicorn
-flamapy==2.0.0
-flask-swagger-ui
-flask-restplus
-pytest
-flask_cors
-flasgger

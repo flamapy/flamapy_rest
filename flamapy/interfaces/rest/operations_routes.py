@@ -14,25 +14,25 @@ MODEL_FOLDER = './resources/models/'
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Configuration):
-            return obj.__dict__ 
+            return obj.__dict__
         return super().default(obj)
-    
+
 def _api_call(operation_name: str):
     # Get files
     uploaded_model = request.files['model']
-    
+
     # Check if file is provided
     if uploaded_model.filename != '':
         # Save file
         uploaded_model.save(os.path.join(MODEL_FOLDER, uploaded_model.filename))
-        
+
         fm = FLAMAFeatureModel(os.path.join(MODEL_FOLDER, uploaded_model.filename))
         operation = getattr(fm, operation_name)
-        
+
         # Extract the method signature
         sig = inspect.signature(operation)
         params = sig.parameters
-        
+
         args = []
         for param in params.values():
             if param.name == 'feature_name':
@@ -41,15 +41,15 @@ def _api_call(operation_name: str):
                 configuration = request.files['configuration']
                 configuration.save(os.path.join(MODEL_FOLDER, configuration.filename))
                 args.append(os.path.join(MODEL_FOLDER, configuration.filename))
-        
+
         result = operation(*args)
 
         # Remove file
         os.remove(os.path.join(MODEL_FOLDER, uploaded_model.filename))
-        
+
         if 'configuration' in request.files:
             os.remove(os.path.join(MODEL_FOLDER, request.files['configuration'].filename))
-        
+
         # Return result
         if result is None:
             return jsonify(error='Not valid result'), 404
@@ -66,7 +66,7 @@ def extract_docstring_with_swagger_info(method):
         type: file
         required: true
     """
-    
+
     # Extract the method signature
     sig = inspect.signature(method)
     for param in sig.parameters.values():
@@ -103,7 +103,7 @@ def extract_docstring_with_swagger_info(method):
 def create_route(operation_name: str, docstring: str):
     def route_function():
         return _api_call(operation_name)
-    
+
     route_function.__name__ = operation_name
     route_function.__doc__ = docstring
     return route_function
