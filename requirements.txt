@@ -1,9 +1,7 @@
 wheel
 Flask
 gunicorn
-flamapy==2.0.0
-flask-swagger-ui
-flask-restplus
+flamapy~=2.5.0
 pytest
 flask_cors
 flasgger
