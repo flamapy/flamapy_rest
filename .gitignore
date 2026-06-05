@@ -2,7 +2,7 @@ build
 env
 htmlcov
 flamapy/metamodels
-
+CLAUDE.*
 *.pyc
 __pycache__
 .coverage

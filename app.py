@@ -8,7 +8,9 @@ from flamapy.interfaces.rest.operations_routes import operations_bp
 # Creating the app and configuring the cors
 app = Flask(__name__)
 CORS(app)
-app.config['API_BASE_URL'] = '/api/v2'
+# Reject oversized uploads early (feature model files are small); guards against
+# memory-exhaustion DoS via huge multipart bodies.
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 
 #Now we are configuring the self generation of swagger by means of flasgger
 config = {
