@@ -1,5 +1,8 @@
 name: Docker Image CI
 
+# Tag-driven release, mirroring the .dev tag schema of the flamapy packages.
+#   v1.2.3       -> docker :latest + :v1.2.3
+#   v1.2.3.dev0  -> docker :dev    + :v1.2.3.dev0  (preview only)
 on:
   push:
     tags:
@@ -86,11 +89,25 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_API_TOKEN }}
 
+      # .dev tags move the floating ":dev" tag; real releases move ":latest".
+      - name: Compute moving tag
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *dev* ]]; then
+            echo "moving=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "moving=latest" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create and push the manifest list
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t "${IMAGE}:${GITHUB_REF_NAME}" \
+          docker buildx imagetools create \
+            -t "${IMAGE}:${GITHUB_REF_NAME}" \
+            -t "${IMAGE}:${MOVING}" \
             $(printf "${IMAGE}@sha256:%s " *)
+        env:
+          MOVING: ${{ steps.meta.outputs.moving }}
 
       - name: Inspect the published image
         run: docker buildx imagetools inspect "${IMAGE}:${GITHUB_REF_NAME}"
