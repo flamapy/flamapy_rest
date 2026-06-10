@@ -143,6 +143,30 @@ in the Swagger UI at <http://localhost:8000/docs/>.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
+## Abuse controls & configuration
+
+The API ships with per-IP rate limiting, a per-operation time budget, upload size limits and a
+result cache, all configurable through environment variables (e.g. `docker run -e FLAMAPY_...`):
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `FLAMAPY_MAX_CONTENT_LENGTH` | `16777216` | Max upload size in bytes; larger requests get **413** |
+| `FLAMAPY_RATELIMIT_ENABLED` | `true` | Turn rate limiting on/off |
+| `FLAMAPY_RATELIMIT_DEFAULT` | `60 per minute` | Per-IP limit for cheap operations |
+| `FLAMAPY_RATELIMIT_EXPENSIVE` | `10 per minute` | Per-IP limit for enumeration/solver-heavy operations (`configurations`, `configurations_number`, `sampling`, …); exceeding a limit returns **429** |
+| `FLAMAPY_RATELIMIT_STORAGE_URI` | `memory://` | Limiter storage; use `redis://host:6379` when running several gunicorn workers so they share counters |
+| `FLAMAPY_OPERATION_TIMEOUT` | `60` | Seconds an operation may run before it is killed and **504** is returned; `0` disables |
+| `FLAMAPY_CACHE_TTL` | `3600` | Seconds a result stays cached (same model + operation + arguments); `0` disables. Responses carry an `X-Cache: HIT|MISS` header |
+| `FLAMAPY_CACHE_MAXSIZE` | `128` | Max cached results per worker |
+| `FLAMAPY_TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy so rate limits see the real client IP (`X-Forwarded-For`) |
+| `WEB_CONCURRENCY` | `2` | gunicorn worker count (Docker image) |
+| `GUNICORN_TIMEOUT` | `120` | gunicorn hard worker timeout; keep it above `FLAMAPY_OPERATION_TIMEOUT` |
+
+Every request is logged to stdout (client IP, path, status, duration, upload size, cache result),
+so `docker logs` is enough to spot heavy users.
+
+<p align="right">(<a href="#top">back to top</a>)</p>
+
 ## API Documentation
 
 All documentation is registered with Swagger UI and OAS 3.0, served at

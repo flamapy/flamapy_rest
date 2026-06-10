@@ -18,6 +18,8 @@ dependencies = [
     "flask-restplus",
     "flask_cors",
     "flasgger",
+    "Flask-Limiter",
+    "cachetools",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,5 @@
 import os
+import hashlib
 import inspect
 import json
 import shutil
@@ -6,15 +7,39 @@ import tempfile
 import typing
 from typing import Any, Callable
 
-from flask import Blueprint, request, jsonify, abort
+from flask import Blueprint, Response, current_app, request, jsonify, abort
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 from flamapy.interfaces.python.flamapy_feature_model import FLAMAFeatureModel, Backend
-from flamapy.core.exceptions import FlamaException
 from flamapy.metamodels.configuration_metamodel.models import Configuration
+
+from flamapy.interfaces.rest.extensions import (
+    limiter,
+    result_cache,
+    default_operation_limit,
+    expensive_operation_limit,
+)
+from flamapy.interfaces.rest.runner import ModelParseError, OperationTimeout, run_operation
 
 
 operations_bp = Blueprint('operations_bp', __name__, url_prefix='/api/v1/operations')
+
+# Operations that enumerate or repeatedly invoke a solver; they get the stricter
+# rate-limit tier because a single call can monopolize a CPU for a long time.
+_EXPENSIVE_OPERATIONS = {
+    'configurations',
+    'configurations_number',
+    'configurations_with_n_features',
+    'conflict',
+    'diagnosis',
+    'feature_inclusion_probability',
+    'homogeneity',
+    'product_distribution',
+    'sampling',
+    'unique_features',
+    'variability',
+    'variant_features',
+}
 
 # Backward-compatible multipart field names for parameters that the API exposed
 # before the dispatcher became generic. Any other parameter derives its field
@@ -116,6 +141,26 @@ def _resolve_kwargs(operation: Any, work_dir: str) -> dict[str, Any]:
     return kwargs
 
 
+def _cache_key(
+    operation_name: str, operation: Any, model_path: str, kwargs: dict[str, Any]
+) -> str:
+    """Digest of everything that determines the result: the operation, the model
+    contents and every argument (file arguments by content, not by temp path)."""
+    file_params = {p.name for p in _operation_params(operation) if _is_file_param(p)}
+    digest = hashlib.sha256()
+    digest.update(operation_name.encode())
+    with open(model_path, 'rb') as model_file:
+        digest.update(model_file.read())
+    for name in sorted(kwargs):
+        digest.update(b'\x00' + name.encode() + b'\x00')
+        if name in file_params:
+            with open(kwargs[name], 'rb') as uploaded_file:
+                digest.update(uploaded_file.read())
+        else:
+            digest.update(repr(kwargs[name]).encode())
+    return digest.hexdigest()
+
+
 def _api_call(operation_name: str) -> Any:
     uploaded_model = request.files.get('model')
     if uploaded_model is None or not uploaded_model.filename:
@@ -126,19 +171,34 @@ def _api_call(operation_name: str) -> Any:
     work_dir = tempfile.mkdtemp(prefix='flamapy_')
     try:
         model_path = _save_upload(uploaded_model, work_dir)
-        try:
-            fm = FLAMAFeatureModel(model_path)
-        except FlamaException:
-            abort(400, "The uploaded model could not be parsed")
-        operation = getattr(fm, operation_name)
+        operation = getattr(FLAMAFeatureModel, operation_name)
         kwargs = _resolve_kwargs(operation, work_dir)
-        result = operation(**kwargs)
+
+        key = _cache_key(operation_name, operation, model_path, kwargs)
+        payload = result_cache.get(key)
+        if payload is not None:
+            response: Response = jsonify(payload)
+            response.headers['X-Cache'] = 'HIT'
+            return response
+
+        try:
+            result = run_operation(
+                model_path, operation_name, kwargs, current_app.config['OPERATION_TIMEOUT']
+            )
+        except ModelParseError:
+            abort(400, "The uploaded model could not be parsed")
+        except OperationTimeout as exc:
+            abort(504, str(exc))
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
     if result is None:
         return jsonify(error='Not valid result'), 404
-    return jsonify(json.loads(json.dumps(result, cls=CustomJSONEncoder)))
+    payload = json.loads(json.dumps(result, cls=CustomJSONEncoder))
+    result_cache.set(key, payload)
+    response = jsonify(payload)
+    response.headers['X-Cache'] = 'MISS'
+    return response
 
 
 def extract_docstring_with_swagger_info(method: Any) -> str:
@@ -189,9 +249,12 @@ def create_route(operation_name: str, docstring: str) -> Callable[[], Any]:
 
 
 # Introspect FLAMAFeatureModel to expose every public method as a POST route,
-# generating its Swagger spec from the method signature.
+# generating its Swagger spec from the method signature. Limits are passed as
+# callables so they read the app config of whichever app the blueprint joins.
 for name, method in inspect.getmembers(FLAMAFeatureModel, predicate=inspect.isfunction):
     if name.startswith('_'):
         continue
     docstring = extract_docstring_with_swagger_info(method)
-    operations_bp.route(f'/{name}', methods=['POST'])(create_route(name, docstring))
+    limit = expensive_operation_limit if name in _EXPENSIVE_OPERATIONS else default_operation_limit
+    route_view = limiter.limit(limit)(create_route(name, docstring))
+    operations_bp.route(f'/{name}', methods=['POST'])(route_view)
