@@ -254,6 +254,8 @@ def create_route(operation_name: str, docstring: str) -> Callable[[], Any]:
 for name, method in inspect.getmembers(FLAMAFeatureModel, predicate=inspect.isfunction):
     if name.startswith('_'):
         continue
+    if isinstance(inspect.getattr_static(FLAMAFeatureModel, name), staticmethod):
+        continue  # producer ops (model generators) need no model; Python-API only for now
     docstring = extract_docstring_with_swagger_info(method)
     limit = expensive_operation_limit if name in _EXPENSIVE_OPERATIONS else default_operation_limit
     route_view = limiter.limit(limit)(create_route(name, docstring))
