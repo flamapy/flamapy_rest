@@ -1,0 +1,58 @@
+name: Python analysis
+
+on: [push, pull_request]
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installing dependencies
+        run: |
+              python -m pip install --upgrade pip
+              pip install setuptools
+              pip install .
+      - name: Installing Ruff linter
+        run: |
+            pip install ruff
+      - name: Running Ruff linter
+        run: |
+            ruff check .
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools
+          pip install mypy
+          pip install .
+      - name: Running static types with mypy
+        run: |
+          mypy -p flamapy
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools
+          pip install .
+          pip install pytest
+      - name: Running test
+        run: |
+          pytest

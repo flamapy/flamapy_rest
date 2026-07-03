@@ -1,7 +1,0 @@
-wheel
-Flask
-gunicorn
-flamapy~=2.5.0
-pytest
-flask_cors
-flasgger
