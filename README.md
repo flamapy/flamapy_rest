@@ -128,9 +128,14 @@ python -m flask run --host=0.0.0.0
 
 ## Usage
 
-Every public operation of FLAMAPY's `FLAMAFeatureModel` facade is exposed as a `POST` endpoint under
-`/api/v1/operations/<operation_name>`. Each call uploads a feature model file (e.g. UVL) as
-multipart form data; some operations also accept an optional `feature` or `configuration` parameter.
+The API mirrors FLAMAPY's Python facade (`FLAMAFeatureModel`): every one of its operations is a
+`POST` endpoint under `/api/v1/operations/<operation_name>`, with the same parameters as the Python
+method. Each call uploads a feature model file (e.g. UVL) as multipart form data; the other
+parameters are form fields named after the Python arguments (`configuration`, `feature`, `size`,
+`t`, …), files for the ones that take a path. Structured arguments (`objectives`,
+`configurations`) are sent as JSON text. The two operations that return a feature model
+(`generate_random_feature_model`, which needs no upload, and `generate_random_attribute`) answer
+with the model as UVL text.
 
 ```bash
 # Example: count the number of valid configurations of a model
@@ -140,6 +145,56 @@ curl -X POST http://localhost:8000/api/v1/operations/configurations_number \
 
 The full, interactive list of endpoints — with parameters and "try it out" support — is available
 in the Swagger UI at <http://localhost:8000/docs/>.
+
+### Choosing the backend
+
+Operations that more than one solver implements take `backend`, exactly like the Python facade:
+a plugin name (`sat`, `bdd`, `z3`; `sdd`, `sharpsat`, `dnnf` when installed) or `auto`, which
+hands the choice to the query planner. `allow_approximate=true` lets `auto` also consider
+approximate implementations. Setting `FLAMAPY_BACKEND=auto` (and optionally
+`FLAMAPY_ALLOW_APPROXIMATE=1`) in the container's environment makes `auto` the default for
+every call.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/operations/configurations_number \
+  -F "model=@resources/models/simple/valid_model.uvl" -F "backend=auto"
+```
+
+### Provenance
+
+The body of a response is the bare value the Python facade returns; the provenance the facade
+keeps in `last_result` travels in response headers:
+
+| Header | Meaning |
+|---|---|
+| `X-Flamapy-Plugin` / `X-Flamapy-Backend` | The plugin that produced the result and the model it ran on (`pysat`, `bdd`, `z3`, …) |
+| `X-Flamapy-Exact` | `false` when an approximate implementation produced the result |
+| `X-Flamapy-Planner` | Under `backend=auto`, the planner's choice and its reasons (estimated milliseconds, …) |
+| `X-Flamapy-Wall-Time` | Seconds spent in the operation |
+| `X-Cache` | `HIT` / `MISS` of the result cache |
+
+### Asking the planner without running anything
+
+`POST /api/v1/operations/<operation>/plan` (same `model` upload, optional `allow_approximate`)
+returns what `backend=auto` would do for that operation on that model — the facade's `plan()`:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/operations/configurations_number/plan \
+  -F "model=@resources/models/simple/valid_model.uvl"
+# {"operation": "configurations_number", "plugin": "bdd_metamodel", "backend": "bdd",
+#  "transformation_chain": ["fm", "bdd"], "estimated_cost_ms": 12,
+#  "rationale": "bdd: estimated 12 ms (transformation 11, operation 1), historical default backend",
+#  "alternatives": ["sdd_metamodel", "pysat_metamodel", "z3_metamodel"]}
+```
+
+### Errors
+
+| Status | Meaning |
+|---|---|
+| `400` | Missing or invalid parameter, or a model that could not be parsed |
+| `404` | Unknown operation, or an operation that produced no result |
+| `413` / `429` / `504` | Upload too large / rate limit exceeded / operation killed after its time budget |
+| `422` | The operation could not run: an unknown backend, invalid inputs, or (under `backend=auto`) no installed plugin can handle this model; the body says why |
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -159,6 +214,8 @@ result cache, all configurable through environment variables (e.g. `docker run -
 | `FLAMAPY_CACHE_TTL` | `3600` | Seconds a result stays cached (same model + operation + arguments); `0` disables. Responses carry an `X-Cache: HIT|MISS` header |
 | `FLAMAPY_CACHE_MAXSIZE` | `128` | Max cached results per worker |
 | `FLAMAPY_TRUST_PROXY` | `false` | Set to `true` behind a reverse proxy so rate limits see the real client IP (`X-Forwarded-For`) |
+| `FLAMAPY_BACKEND` | unset | `auto` makes the query planner choose the backend of every call that does not name one |
+| `FLAMAPY_ALLOW_APPROXIMATE` | unset | `1` lets `auto` also pick approximate implementations |
 | `WEB_CONCURRENCY` | `2` | gunicorn worker count (Docker image) |
 | `GUNICORN_TIMEOUT` | `120` | gunicorn hard worker timeout; keep it above `FLAMAPY_OPERATION_TIMEOUT` |
 

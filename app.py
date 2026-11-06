@@ -8,13 +8,14 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Importing routes
-from flamapy.interfaces.rest.operations_routes import operations_bp
+from flamapy.interfaces.rest.operations_routes import PROVENANCE_HEADERS, operations_bp
 from flamapy.interfaces.rest.config import load_config
 from flamapy.interfaces.rest.extensions import limiter, result_cache
 
 # Creating the app and configuring the cors
 app = Flask(__name__)
-CORS(app)
+# Browsers only see the cache and provenance headers when CORS exposes them.
+CORS(app, expose_headers=['X-Cache', *(header for header, _ in PROVENANCE_HEADERS)])
 # Abuse controls (upload size, rate limits, operation timeout, result cache);
 # every value is overridable through FLAMAPY_* env vars.
 app.config.update(load_config())
