@@ -14,8 +14,6 @@ dependencies = [
     "Flask",
     "gunicorn",
     "flamapy~=2.9.0.dev0",
-    "flask-swagger-ui",
-    "flask-restplus",
     "flask_cors",
     "flasgger",
     "Flask-Limiter",
