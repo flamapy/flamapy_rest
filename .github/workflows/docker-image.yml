@@ -33,6 +33,18 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # The image installs flamapy-rest's dependencies from PyPI, and this workflow starts on
+      # the same tag push as the packages' own release jobs: build only once flamapy (and, with
+      # it, the plugins it needs) is on PyPI at this version.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Wait for the flamapy dependencies on PyPI
+        timeout-minutes: 60
+        run: python .github/workflows/wait_for_pypi.py
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
