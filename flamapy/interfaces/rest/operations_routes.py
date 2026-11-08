@@ -271,7 +271,7 @@ def _api_call(operation_name: str) -> Any:
             abort(504, str(exc))
         except FlamaException as exc:
             # The operation could not run: an unknown backend, invalid inputs, or no
-            # installed plugin able to run it on this model (backend=auto). 404 as in 2.8,
+            # installed plugin able to run it on this model (backend=auto). 404 as in 2.6,
             # with the reason; 3.0 moves this to 422.
             abort(404, str(exc))
     finally:

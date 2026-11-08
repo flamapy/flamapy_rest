@@ -194,7 +194,7 @@ curl -X POST http://localhost:8000/api/v1/operations/configurations_number/plan 
 | Status | Meaning |
 |---|---|
 | `400` | Missing or invalid parameter, or a model that could not be parsed |
-| `404` | Unknown operation, or the operation could not run: an unknown backend, invalid inputs, or (under `backend=auto`) no installed plugin can handle this model. The body says why. This is the 2.8 status; 3.0 will answer these with `422` |
+| `404` | Unknown operation, or the operation could not run: an unknown backend, invalid inputs, or (under `backend=auto`) no installed plugin can handle this model. The body says why. This is the 2.6 status; 3.0 will answer these with `422` |
 | `413` / `429` / `504` | Upload too large / rate limit exceeded / operation killed after its time budget |
 | `500` | An unexpected error inside a plugin; the details go to the server log, not the response |
 
