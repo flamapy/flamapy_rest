@@ -37,6 +37,8 @@ operations_bp = Blueprint('operations_bp', __name__, url_prefix='/api/v1/operati
 # rate-limit tier because a single call can monopolize a CPU for a long time.
 _EXPENSIVE_OPERATIONS = {
     'attribute_optimization',
+    'commonality',
+    'generate_random_feature_model',
     'configurations',
     'covering_array',
     't_wise_sampling',
@@ -69,14 +71,17 @@ _ENUM_VALUES = {
 _SWAGGER_TYPES = {int: 'integer', float: 'number', bool: 'boolean', str: 'string'}
 
 # The provenance of every result (the facade's ``last_result``: plugin, backend, exact,
-# planner rationale, wall time) travels in response headers, so the body stays the bare value
-# the Python facade returns.
+# planner rationale, wall time of the run that computed it, hash of the model, whether the
+# backend model came from the artifact cache) travels in response headers, so the body stays
+# the bare value the Python facade returns.
 PROVENANCE_HEADERS = (
     ('X-Flamapy-Plugin', 'plugin'),
     ('X-Flamapy-Backend', 'backend'),
     ('X-Flamapy-Exact', 'exact'),
     ('X-Flamapy-Planner', 'planner'),
     ('X-Flamapy-Wall-Time', 'wall_time'),
+    ('X-Flamapy-Model-Hash', 'model_hash'),
+    ('X-Flamapy-Artifact-Cache', 'cache_hit'),
 )
 
 
@@ -266,8 +271,9 @@ def _api_call(operation_name: str) -> Any:
             abort(504, str(exc))
         except FlamaException as exc:
             # The operation could not run: an unknown backend, invalid inputs, or no
-            # installed plugin able to run it on this model (backend=auto).
-            abort(422, str(exc))
+            # installed plugin able to run it on this model (backend=auto). 404 as in 2.8,
+            # with the reason; 3.0 moves this to 422.
+            abort(404, str(exc))
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -297,7 +303,7 @@ def _plan_call(operation_name: str) -> Any:
         except OperationTimeout as exc:
             abort(504, str(exc))
         except FlamaException as exc:
-            abort(422, str(exc))
+            abort(404, str(exc))
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
     return jsonify(chosen)
@@ -335,6 +341,9 @@ def extract_docstring_with_swagger_info(method: Any) -> str:
         ]
         if _is_json_param(param):
             lines.append("        description: JSON (an object or a list) or a plain string")
+        if param.name == 'allow_approximate':
+            lines.append("        description: Only with backend=auto, let the planner choose"
+                         " approximate implementations")
         if param.name in _ENUM_VALUES:
             lines.append("        enum:")
             lines += [f"          - {value}" for value in _ENUM_VALUES[param.name]]
@@ -343,16 +352,16 @@ def extract_docstring_with_swagger_info(method: Any) -> str:
         "    responses:",
         "      200:",
         "        description: " + (
-            "The resulting feature model as UVL text" if returns_model
+            "A JSON string holding the resulting feature model in UVL" if returns_model
             else "Result of the operation; its provenance travels in the X-Flamapy-* headers"),
         "        headers:",
     ]
     for header, _ in PROVENANCE_HEADERS:
         lines += [f"          {header}:", "            type: string"]
     lines += [
-        "      422:",
+        "      404:",
         "        description: The operation could not run (unknown backend, invalid input,"
-        " or no installed plugin can run it on this model)",
+        " or no installed plugin can run it on this model); the body says why",
     ]
     docstring = (method.__doc__ or "").replace('\n', ' ').strip()
     return docstring + "\n" + "\n".join(lines) + "\n"
@@ -382,7 +391,7 @@ def _plan_docstring(operation_name: str) -> str:
         "    responses:",
         "      200:",
         "        description: The planner's choice",
-        "      422:",
+        "      404:",
         "        description: No installed plugin can run the operation on this model",
     ]
     return "\n".join(lines) + "\n"

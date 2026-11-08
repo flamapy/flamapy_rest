@@ -1,5 +1,7 @@
 import multiprocessing
-from typing import Any, Callable, Optional
+import os
+from contextlib import contextmanager
+from typing import Any, Callable, Iterator, Optional
 
 from flamapy.core.exceptions import FlamaException
 from flamapy.interfaces.python.flamapy_feature_model import FLAMAFeatureModel
@@ -11,6 +13,11 @@ class OperationTimeout(Exception):
 
 class ModelParseError(Exception):
     """The uploaded model could not be parsed."""
+
+
+class OperationCrashed(RuntimeError):
+    """The operation failed with an unexpected error (a bug, not a FlamaException). Never a
+    FlamaException, so it reaches the generic 500 handler without exposing its message."""
 
 
 # What an operation run hands back: the bare value, plus the provenance of the result
@@ -28,10 +35,26 @@ def _load(model_path: str) -> FLAMAFeatureModel:
         raise ModelParseError(str(exc)) from exc
 
 
+@contextmanager
+def _producers_raise() -> Iterator[None]:
+    """Producers are static facade methods with no instance to carry raise_errors: they follow
+    FLAMAPY_RAISE_ERRORS, set here for the duration of the call."""
+    previous = os.environ.get('FLAMAPY_RAISE_ERRORS')
+    os.environ['FLAMAPY_RAISE_ERRORS'] = '1'
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop('FLAMAPY_RAISE_ERRORS', None)
+        else:
+            os.environ['FLAMAPY_RAISE_ERRORS'] = previous
+
+
 def _execute(model_path: Optional[str], operation_name: str, kwargs: dict[str, Any]) -> Outcome:
     if model_path is None:
         # A producer (generate_random_feature_model): a static facade method, no model.
-        return getattr(FLAMAFeatureModel, operation_name)(**kwargs), None
+        with _producers_raise():
+            return getattr(FLAMAFeatureModel, operation_name)(**kwargs), None
     feature_model = _load(model_path)
     value = getattr(feature_model, operation_name)(**kwargs)
     envelope = feature_model.last_result
@@ -45,17 +68,8 @@ def _execute(model_path: Optional[str], operation_name: str, kwargs: dict[str, A
 def _plan(model_path: str, operation_name: str,
           allow_approximate: Optional[bool]) -> dict[str, Any]:
     feature_model = _load(model_path)
-    chosen = feature_model.plan(operation_name, allow_approximate)
-    source = feature_model.fm_model.get_extension()
-    return {
-        'operation': operation_name,
-        'plugin': chosen.plugin_name,
-        'backend': chosen.target_extension,
-        'transformation_chain': [source, *(dst for _, dst in chosen.transformation_chain)],
-        'estimated_cost_ms': chosen.estimated_cost,
-        'rationale': chosen.rationale,
-        'alternatives': list(chosen.alternatives),
-    }
+    chosen = feature_model.plan(operation_name, allow_approximate=allow_approximate)
+    return {'operation': operation_name, **chosen.to_dict(feature_model.fm_model.get_extension())}
 
 
 def _child(conn: Any, task: Callable[..., Any], args: tuple[Any, ...]) -> None:
@@ -63,8 +77,10 @@ def _child(conn: Any, task: Callable[..., Any], args: tuple[Any, ...]) -> None:
         conn.send(('ok', task(*args)))
     except ModelParseError as exc:
         conn.send(('parse_error', str(exc)))
+    except FlamaException as exc:
+        conn.send(('flama_error', str(exc)))
     except Exception as exc:  # pylint: disable=broad-except
-        conn.send(('error', str(exc)))
+        conn.send(('crash', f'{type(exc).__name__}: {exc}'))
     finally:
         conn.close()
 
@@ -75,7 +91,9 @@ def _run_in_child(task: Callable[..., Any], args: tuple[Any, ...], timeout: int,
     process: solver code is CPU-bound C that threads or signals cannot reliably interrupt,
     but a child process can always be killed. A timeout of 0 runs the task inline.
 
-    Errors come back as :class:`ModelParseError` or :class:`FlamaException` (its message)."""
+    Errors come back as :class:`ModelParseError`, :class:`FlamaException` (the operation could
+    not run, with its reason) or :class:`OperationCrashed` (anything else), with the same types
+    whether the task ran in a child or inline."""
     if timeout <= 0:
         return task(*args)
 
@@ -96,8 +114,10 @@ def _run_in_child(task: Callable[..., Any], args: tuple[Any, ...], timeout: int,
 
     if status == 'parse_error':
         raise ModelParseError(payload)
-    if status == 'error':
+    if status == 'flama_error':
         raise FlamaException(payload)
+    if status == 'crash':
+        raise OperationCrashed(payload)
     return payload
 
 

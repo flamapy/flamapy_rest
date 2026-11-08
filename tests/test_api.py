@@ -145,6 +145,8 @@ def test_result_carries_its_provenance_in_headers(client: FlaskClient) -> None:
     assert response.headers['X-Flamapy-Backend'] == 'pysat'
     assert response.headers['X-Flamapy-Exact'] == 'true'
     assert 'X-Flamapy-Planner' not in response.headers  # historical default, no planner
+    assert len(response.headers['X-Flamapy-Model-Hash']) >= 16
+    assert response.headers['X-Flamapy-Artifact-Cache'] == 'false'
 
 
 def test_auto_backend_reports_the_planner(client: FlaskClient) -> None:
@@ -186,14 +188,68 @@ def test_plan_only_exists_for_backend_selectable_operations(client: FlaskClient)
     assert response.status_code == 404
 
 
-def test_operation_errors_are_reported_as_422(client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_operation_errors_keep_the_2_8_status_with_a_reason(
+        client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
     def failing(model_path: Any, operation_name: str, kwargs: dict[str, Any], timeout: int) -> Any:
         raise FlamaException("No installed backend can run 'configurations_number' on this model")
 
     monkeypatch.setattr(operations_routes, 'run_operation', failing)
     response = client.post(CONFIGURATIONS_NUMBER, data={**_model_upload(), 'backend': 'auto'})
-    assert response.status_code == 422
+    assert response.status_code == 404
     assert 'No installed backend' in response.get_json()['error']
+
+
+@pytest.mark.parametrize('timeout', [0, 5])
+def test_failing_producer_reports_its_reason(
+        client: FlaskClient, monkeypatch: pytest.MonkeyPatch, timeout: int) -> None:
+    from flamapy.interfaces.python import flamapy_feature_model as facade  # noqa: PLC0415
+    name = FLAMAFeatureModel.generate_random_feature_model._facade_descriptor.operation
+
+    class Refusing:
+        def __getattr__(self, _setter: str) -> Any:
+            return lambda *_args: None  # accepts every input setter
+
+        def execute(self, _model: Any) -> None:
+            raise FlamaException('cannot generate that model')
+
+    Refusing.__name__ = name
+    monkeypatch.setattr(facade._DISCOVERY, 'get_operations', lambda: [Refusing])
+    flask_app.config['OPERATION_TIMEOUT'] = timeout
+    response = client.post('/api/v1/operations/generate_random_feature_model',
+                           data={'num_features': '6'})
+    assert response.status_code == 404
+    assert response.get_json()['error'] == 'cannot generate that model'
+
+
+def _crashing_task() -> None:
+    raise TypeError('plugin bug')
+
+
+def _refusing_task() -> None:
+    raise FlamaException('cannot run')
+
+
+def test_child_process_keeps_crashes_apart_from_operation_errors() -> None:
+    from flamapy.interfaces.rest.runner import OperationCrashed, _run_in_child  # noqa: PLC0415
+    with pytest.raises(OperationCrashed):
+        _run_in_child(_crashing_task, (), 5, 'crash')
+    with pytest.raises(FlamaException, match='cannot run'):
+        _run_in_child(_refusing_task, (), 5, 'refuse')
+    assert not issubclass(OperationCrashed, FlamaException)
+
+
+def test_crash_in_the_child_is_a_500_without_details(
+        client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from flamapy.interfaces.rest import runner  # noqa: PLC0415
+
+    def crashing(*_args: Any) -> Any:
+        raise TypeError('secret internals')
+
+    monkeypatch.setattr(runner, '_execute', crashing)
+    flask_app.config['OPERATION_TIMEOUT'] = 5
+    response = client.post(SATISFIABLE, data=_model_upload())
+    assert response.status_code == 500
+    assert 'secret' not in response.get_data(as_text=True)
 
 
 def test_unknown_backend_is_rejected(client: FlaskClient) -> None:

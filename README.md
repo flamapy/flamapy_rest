@@ -135,7 +135,7 @@ parameters are form fields named after the Python arguments (`configuration`, `f
 `t`, …), files for the ones that take a path. Structured arguments (`objectives`,
 `configurations`) are sent as JSON text. The two operations that return a feature model
 (`generate_random_feature_model`, which needs no upload, and `generate_random_attribute`) answer
-with the model as UVL text.
+with a JSON string that holds the model in UVL.
 
 ```bash
 # Example: count the number of valid configurations of a model
@@ -170,7 +170,9 @@ keeps in `last_result` travels in response headers:
 | `X-Flamapy-Plugin` / `X-Flamapy-Backend` | The plugin that produced the result and the model it ran on (`pysat`, `bdd`, `z3`, …) |
 | `X-Flamapy-Exact` | `false` when an approximate implementation produced the result |
 | `X-Flamapy-Planner` | Under `backend=auto`, the planner's choice and its reasons (estimated milliseconds, …) |
-| `X-Flamapy-Wall-Time` | Seconds spent in the operation |
+| `X-Flamapy-Wall-Time` | Seconds spent in the operation (on a cached response, `X-Cache: HIT`, the time of the run that computed it) |
+| `X-Flamapy-Model-Hash` | Canonical hash of the uploaded model |
+| `X-Flamapy-Artifact-Cache` | `true` when the backend model was loaded from flamapy's artifact cache (`FLAMAPY_CACHE=1`) instead of being built |
 | `X-Cache` | `HIT` / `MISS` of the result cache |
 
 ### Asking the planner without running anything
@@ -192,9 +194,9 @@ curl -X POST http://localhost:8000/api/v1/operations/configurations_number/plan 
 | Status | Meaning |
 |---|---|
 | `400` | Missing or invalid parameter, or a model that could not be parsed |
-| `404` | Unknown operation, or an operation that produced no result |
+| `404` | Unknown operation, or the operation could not run: an unknown backend, invalid inputs, or (under `backend=auto`) no installed plugin can handle this model. The body says why. This is the 2.8 status; 3.0 will answer these with `422` |
 | `413` / `429` / `504` | Upload too large / rate limit exceeded / operation killed after its time budget |
-| `422` | The operation could not run: an unknown backend, invalid inputs, or (under `backend=auto`) no installed plugin can handle this model; the body says why |
+| `500` | An unexpected error inside a plugin; the details go to the server log, not the response |
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
