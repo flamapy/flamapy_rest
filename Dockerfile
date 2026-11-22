@@ -6,7 +6,12 @@ WORKDIR /flamapy-api
 
 COPY pyproject.toml pyproject.toml
 COPY setup.py setup.py
-RUN pip3 install .
+# On a release the flamapy packages were uploaded minutes ago, and PyPI's index is served from
+# caches that do not all show a new version at once: retry instead of failing the image.
+RUN for attempt in 1 2 3 4 5 6; do \
+        pip3 install --no-cache-dir . && exit 0; \
+        echo "pip install failed (attempt $attempt of 6); retrying in 30 s" >&2; sleep 30; \
+    done; exit 1
 COPY . .
 
 # Make port 8000 available to the world outside this container
